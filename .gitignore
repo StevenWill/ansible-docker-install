@@ -1,0 +1,52 @@
+### --- OS Specific --- ###
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+### --- Bash & Shell --- ###
+*.log
+*.tmp
+*.swp
+# If you use direnv
+.envrc
+
+### --- Ansible --- ###
+*.retry
+*.pyc
+*.pyo
+__pycache__/
+# Ansible Vault password files (never commit these)
+.vault_pass
+# Local custom configuration
+ansible.cfg
+# Collections/Roles installed locally
+.imported_collections/
+roles/external/
+
+### --- Docker & Docker Compose --- ###
+# Environment files containing secrets
+.env
+.env.*
+!.env.example
+
+# Docker Compose data volumes (e.g., DB data persisted to host)
+# Replace 'data/' with your specific volume mount path
+data/
+db_data/
+
+# Temporary docker files
+.docker_temp_*
+
