@@ -1,0 +1,44 @@
+---
+- name: Install Auggie CLI via Direct Binary (Node 22)
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    node_version: "v22.11.0"
+    node_arch: "linux-x64"
+    # Current IP for nodejs.org (as of March 2026)
+    node_org_ip: "104.20.22.46" 
+
+  tasks:
+    - name: Temporarily fix DNS by adding nodejs.org to hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ node_org_ip }} nodejs.org"
+        state: present
+
+    - name: Download Node.js pre-built binary
+      get_url:
+        # Fixed URL: https://nodejs.org...
+        url: "https://nodejs.org/dist/{{ node_version }}/node-{{ node_version }}-{{ node_arch }}.tar.xz"
+        dest: "/tmp/node.tar.xz"
+        timeout: 60
+        validate_certs: no  # Bypass SSL check if local CA store is outdated
+
+    - name: Extract Node.js binary to /usr/local
+      unarchive:
+        src: "/tmp/node.tar.xz"
+        dest: /usr/local
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+
+    - name: Install Auggie CLI globally
+      command: "/usr/local/bin/npm install -g @augmentcode/auggie"
+      args:
+        creates: /usr/local/bin/auggie
+
+    - name: Remove temporary DNS fix from hosts
+      lineinfile:
+        path: /etc/hosts
+        line: "{{ node_org_ip }} nodejs.org"
+        state: absent
+

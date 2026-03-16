@@ -1,0 +1,157 @@
+---
+- name: Install Docker, Docker Compose, and NVIDIA Container Toolkit for HiveOS
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    repo_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+      ppc64le: ppc64el
+      s390x: s390x
+    repo_arch: "{{ repo_arch_map.get(ansible_architecture, ansible_architecture) }}"
+    docker_user: "{{ ansible_env.SUDO_USER | default(ansible_user, true) | default('user', true) }}"
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  pre_tasks:
+    - name: Ensure the target is Ubuntu 22.04
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == 'Ubuntu'
+          - ansible_distribution_version is version('22.04', '==')
+        fail_msg: This playbook supports Ubuntu 22.04 only.
+
+  tasks:
+    - name: Install apt prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+        state: present
+        update_cache: true
+
+    - name: Ensure keyring directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/apt/keyrings
+        - /usr/share/keyrings
+
+    - name: Install Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: '0644'
+
+    - name: Configure Docker apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.sources
+        mode: '0644'
+        content: |
+          Types: deb
+          URIs: https://download.docker.com/linux/ubuntu
+          Suites: {{ ansible_distribution_release }}
+          Components: stable
+          Signed-By: /etc/apt/keyrings/docker.asc
+
+    - name: Download NVIDIA Container Toolkit ASCII key
+      ansible.builtin.get_url:
+        url: https://nvidia.github.io/libnvidia-container/gpgkey
+        dest: /tmp/nvidia-container-toolkit.asc
+        mode: '0644'
+
+    - name: Convert NVIDIA Container Toolkit key to a keyring
+      ansible.builtin.command:
+        cmd: >-
+          gpg --dearmor --yes
+          --output /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+          /tmp/nvidia-container-toolkit.asc
+      args:
+        creates: /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+
+    - name: Configure NVIDIA Container Toolkit apt repository
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        mode: '0644'
+        content: |
+          deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/deb/{{ repo_arch }} /
+
+    - name: Install Docker Engine, Compose plugin, and NVIDIA toolkit
+      ansible.builtin.apt:
+        name: "{{ docker_packages + ['nvidia-container-toolkit'] }}"
+        state: present
+        update_cache: true
+
+    - name: Check current iptables alternative
+      ansible.builtin.command: readlink -f /etc/alternatives/iptables
+      register: iptables_alternative
+      changed_when: false
+      when: "'hiveos' in ansible_kernel"
+
+    - name: Check current ip6tables alternative
+      ansible.builtin.command: readlink -f /etc/alternatives/ip6tables
+      register: ip6tables_alternative
+      changed_when: false
+      when: "'hiveos' in ansible_kernel"
+
+    - name: Switch iptables to legacy backend on HiveOS kernels
+      ansible.builtin.command: update-alternatives --set iptables /usr/sbin/iptables-legacy
+      when:
+        - "'hiveos' in ansible_kernel"
+        - iptables_alternative.stdout != '/usr/sbin/iptables-legacy'
+
+    - name: Switch ip6tables to legacy backend on HiveOS kernels
+      ansible.builtin.command: update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+      when:
+        - "'hiveos' in ansible_kernel"
+        - ip6tables_alternative.stdout != '/usr/sbin/ip6tables-legacy'
+
+    - name: Ensure Docker is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: Allow configured user to run Docker without sudo
+      ansible.builtin.user:
+        name: "{{ docker_user }}"
+        groups: docker
+        append: true
+
+    - name: Check whether Docker daemon configuration exists
+      ansible.builtin.stat:
+        path: /etc/docker/daemon.json
+      register: docker_daemon_json
+
+    - name: Read Docker daemon configuration
+      ansible.builtin.slurp:
+        src: /etc/docker/daemon.json
+      register: docker_daemon_config
+      when: docker_daemon_json.stat.exists
+
+    - name: Configure NVIDIA runtime for Docker
+      ansible.builtin.command:
+        cmd: nvidia-ctk runtime configure --runtime=docker
+      when: >-
+        (not docker_daemon_json.stat.exists) or
+        ('"nvidia"' not in (docker_daemon_config.content | b64decode))
+      notify: Restart Docker
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted

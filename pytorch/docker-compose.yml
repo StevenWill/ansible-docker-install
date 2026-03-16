@@ -1,0 +1,27 @@
+services:
+  pytorch-gpu:
+    # Use an official NVIDIA PyTorch image for best compatibility
+    image: nvcr.io/nvidia/pytorch:24.05-py3 # Check NVIDIA NGC for the latest tag
+    container_name: pytorch_container
+    # Command to run when the container starts (example: check nvidia-smi)
+    # command: ["nvidia-smi"]
+    # command: python train.py # Command to run your PyTorch script
+    command: ["python", "/workspace/imdb-test.py"]
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1 # or 'all' to use all available GPUs
+              capabilities: [gpu]
+    volumes:
+      # Mount your local project directory into the container
+      #- ./workspace:/media/multivac/writable/docker-workspace
+      - ./workspace:/workspace
+    # Use environment variables if needed (optional)
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all # Ensures PyTorch sees all allocated GPUs
